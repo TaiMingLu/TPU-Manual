@@ -15,11 +15,134 @@ TPUs are specialized high-performance computing resources optimized for large-sc
 - [TPU-Manual](#tpu-manual)
   - [Overview](#overview)
   - [Table of Contents](#table-of-contents)
+  - [Setup](#setup)
+  - [Quick Launch](#quick-launch)
+    - [Set Variables and Check Quotas](#set-variables-and-check-quotas)
+    - [Request a TPU-VM](#request-a-tpu-vm)
+    - [Install environment](#install-environment)
+    - [Training](#training)
+    - [Remove the requested TPU-VM](#remove-the-requested-tpu-vm)
   - [TPU introduction](#tpu-introduction)
     - [Workflow](#workflow)
     - [TPU Specifications](#tpu-specifications)
       - [TPU Hardware Specifications](#tpu-hardware-specifications)
       - [Performance Benchmarks (Llama2 7B)](#performance-benchmarks-llama2-7b)
+  - [Job Conventions](#job-conventions)
+
+## Setup
+In order to use Jobman, you need to make sure `gcloud` is available on your machine in the first place. You may refer to [the official doc](https://cloud.google.com/sdk/docs/install) to do so.  
+Afterwards, also install `alpha` and `beta`:
+```bash
+gcloud components install alpha beta
+```
+
+
+## Quick Launch
+
+ **Important**: Check your project's TPU quotas before requesting resources to avoid quota exceed.
+
+### Set Variables and Check Quotas
+Before starting, set these variables to match your project configuration.
+
+
+You need to go to Google cloud console - Compute Engine - SSH Keys to upload your public key.
+
+```bash
+# Set your project and TPU configuration variables
+export PROJECT_ID="your-project-id"                    # Your Google Cloud project ID
+export TPU_NAME="example_tpu"                          # Name for your TPU VM
+export ZONE="zone"                           # Zone where TPU will be created
+export ACCELERATOR_TYPE="type"                        # TPU type (v3-32, v4-8, v5e-4, etc.)
+export SSH_KEY_FILE="key"     # Path to your SSH key
+
+# Check your current TPU quotas
+gcloud compute project-info describe --project=${PROJECT_ID} --format="table(quotas.metric,quotas.limit,quotas.usage)"
+```
+
+<!-- **Quota Considerations:**
+- Ensure you have sufficient TPU quota for your requested accelerator type
+- Check both regional and zonal quotas for your chosen zone
+- Consider using preemptible TPUs if you have limited quota
+- Contact your administrator if you need quota increases -->
+
+### Request a TPU-VM
+Creates a TPU virtual machine with specified configuration. This allocates the hardware resources you'll use for training.
+```bash
+# Set your Google Cloud project ID
+gcloud config set project ${PROJECT_ID}
+
+# Create a TPU VM using the variables defined above
+gcloud compute tpus tpu-vm create ${TPU_NAME} \
+  --zone=${ZONE} \                           # Geographic location for the TPU
+  --accelerator-type=${ACCELERATOR_TYPE} \   # TPU type from variables
+  --version=tpu-ubuntu2204-base              # Operating system image
+```
+
+### Install environment
+Downloads and installs Miniconda (lightweight Python package manager) on all TPU workers.
+```bash
+# SSH into TPU VM and run commands on all workers
+gcloud alpha compute tpus tpu-vm ssh ${TPU_NAME} \
+--zone=${ZONE} \                             # Same zone as TPU creation
+--ssh-key-file=${SSH_KEY_FILE} \             # SSH authentication key
+--worker=all \                               # Execute on all TPU workers
+--command "mkdir -p ~/miniconda3 && \        # Create miniconda directory
+wget https://repo.anaconda.com/miniconda/Miniconda3-latest-Linux-x86_64.sh -O ~/miniconda3/miniconda.sh && \  # Download miniconda installer
+bash ~/miniconda3/miniconda.sh -b -u -p ~/miniconda3 && \  # Install miniconda silently
+rm ~/miniconda3/miniconda.sh && \            # Clean up installer file
+source ~/miniconda3/etc/profile.d/conda.sh && \  # Load conda environment
+conda init"                                  # Initialize conda for shell
+```
+
+Sets up Python environment with JAX and TPU-specific dependencies for machine learning.
+```bash
+# SSH into TPU VM and install ML environment
+gcloud alpha compute tpus tpu-vm ssh ${TPU_NAME} \
+--zone=${ZONE} \                             # Same zone as TPU creation
+--ssh-key-file=${SSH_KEY_FILE} \             # SSH authentication key
+--worker=all \                               # Execute on all TPU workers
+--command "source ~/miniconda3/etc/profile.d/conda.sh && \  # Load conda
+conda tos accept --override-channels --channel https://repo.anaconda.com/pkgs/main && \  # Accept terms for main channel
+conda tos accept --override-channels --channel https://repo.anaconda.com/pkgs/r && \     # Accept terms for R channel
+conda create -n mnist_env python=3.8 -y && \ # Create Python 3.8 environment
+conda activate mnist_env && \                # Activate the environment
+python -m pip install -U pip && \            # Upgrade pip package manager
+python -m pip install "jax[tpu]==0.4.6" -f https://storage.googleapis.com/jax-releases/libtpu_releases.html && \  # Install JAX with TPU support
+cd tpu_intro && \                            # Navigate to project directory
+python -m pip install -r requirements.txt"  # Install project dependencies
+```
+
+### Training
+Downloads the training code repository to the TPU virtual machine.
+```bash
+# SSH into TPU VM and clone the repository
+gcloud alpha compute tpus tpu-vm ssh ${TPU_NAME} \
+--zone=${ZONE} \                             # Same zone as TPU creation
+--ssh-key-file=${SSH_KEY_FILE} \             # SSH authentication key
+--worker=all \                               # Execute on all TPU workers
+--command "git clone https://github.com/boyazeng/tpu_intro"  # Clone the code repository
+```
+
+To training using multiple workers, 
+you can run the training script across all TPU workers for distributed training.
+```bash
+# SSH into TPU VM and start training
+gcloud alpha compute tpus tpu-vm ssh ${TPU_NAME} \
+--zone=${ZONE} \                             # Same zone as TPU creation
+--ssh-key-file=${SSH_KEY_FILE} \             # SSH authentication key
+--worker=all \                               # Execute on all TPU workers
+--command "cd tpu_intro && \                 # Navigate to project directory
+source ~/miniconda3/etc/profile.d/conda.sh && \  # Load conda environment
+conda activate mnist_env && \                # Activate Python environment
+python quick_start.py"                       # Run the training script
+```
+
+### Remove the requested TPU-VM
+Deletes the TPU virtual machine to stop billing and free up resources.
+```bash
+# Delete the TPU VM to stop charges
+gcloud compute tpus tpu-vm delete ${TPU_NAME} --zone=${ZONE}
+```
 
 
 ## TPU introduction
@@ -113,3 +236,9 @@ The TPU versions we have access to are v2, v3, v4, v5e, and v6e. Understanding t
 - **v2 and v3** are older generations with limited performance for modern LLM training
 - Choose TPU version based on your model size, training time requirements, and cost considerations
 
+
+
+
+## Job Conventions
+
+Naming
