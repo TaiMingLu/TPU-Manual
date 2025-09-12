@@ -27,7 +27,17 @@ TPUs are specialized high-performance computing resources optimized for large-sc
     - [TPU Specifications](#tpu-specifications)
       - [TPU Hardware Specifications](#tpu-hardware-specifications)
       - [Performance Benchmarks (Llama2 7B)](#performance-benchmarks-llama2-7b)
+  - [Google Cloud Project Introduction](#google-cloud-project-introduction)
+    - [Quota](#quota)
+      - [Resource Types](#resource-types)
+      - [Effective Quota Estimation](#effective-quota-estimation)
+      - [Checking Quotas via Command Line](#checking-quotas-via-command-line)
+      - [Available Regions and Zones](#available-regions-and-zones)
+      - [Group Resources](#group-resources)
+  - [Google Cloud Commands](#google-cloud-commands)
+    - [Running on a TPU VM](#running-on-a-tpu-vm)
   - [Job Conventions](#job-conventions)
+  - [Tools](#tools)
 
 ## Setup
 In order to use Jobman, you need to make sure `gcloud` is available on your machine in the first place. You may refer to [the official doc](https://cloud.google.com/sdk/docs/install) to do so.  
@@ -237,8 +247,158 @@ The TPU versions we have access to are v2, v3, v4, v5e, and v6e. Understanding t
 - Choose TPU version based on your model size, training time requirements, and cost considerations
 
 
+## Google Cloud Project Introduction
+
+Each Google Cloud project has several considerations that affect your TPU usage. Understanding these constraints is crucial for successful resource allocation and cost management.
+
+### Quota
+
+Each project has different effective quotas that constrain your usage.
+
+To start, check your TPU quotas at the [Google Cloud Console](https://console.cloud.google.com/iam-admin/quotas). You may see something like this:
+
+![TPU Quota Console](./pics/quota.png)
+
+#### Resource Types
+
+| Resource Type | Description | Runtime Limit | Cost | Best For |
+|---------------|-------------|---------------|------|----------|
+| **On-demand** | Guaranteed resources that won't be preempted | Unlimited | Highest | Production workloads, long training jobs |
+| **Spot** | Preemptible resources with queuing capability | >24 hours | Lowest | Development, fault-tolerant workloads |
+| **Preemptible** | Legacy preemptible resources | 24 hours max | Low | Short-term experiments |
+
+**Key Differences:**
+- **Spot resources** are the newer version of preemptible resources and generally preferred than preempt.
+- **Spot VMs** can be queued and last >1 day, while preemptible VMs cannot
+- **On-demand resources** provide guaranteed availability but at higher cost
+
+#### Effective Quota Estimation
+
+Your usable TPU cores are limited by these factors (in order of impact):
+
+1. **External IP Address Quota**: Typically 8 per zone
+2. **TPU Core Quota**: Maximum cores allowed in your chosen zone
+3. **Resource Type Separation**: Pod cores (v4-16+) and regular cores (v4-8) may have separate quotas
+4. **Availability**: Physical TPU availability in the zone
+
+**Example**: If you have 32 v4-8 cores quota but only 8 external IPs, you can only use 8 cores effectively.
+
+#### Checking Quotas via Command Line
+
+Use this command to check specific quota limits:
+
+```bash
+gcloud beta quotas info describe {RESOURCE_NAME} --service=tpu.googleapis.com --project={PROJECT_ID}
+```
+
+**Common TPU Quota Resources:**
+
+| TPU Version | Resource Type | Scope | Resource Name |
+|-------------|---------------|-------|---------------|
+| v5e | On-demand | Region | `TPUV5sLitepodPerProjectPerRegionForTPUAPI` |
+| v5e | On-demand | Zone | `TPUV5sLitepodPerProjectPerZoneForTPUAPI` |
+| v5e | Spot/Preemptible | Region | `TPUV5sPreemptibleLitepodPerProjectPerRegionForTPUAPI` |
+| v5e | Spot/Preemptible | Zone | `TPUV5sPreemptibleLitepodPerProjectPerZoneForTPUAPI` |
+| v6e | On-demand | Region | `TPUV6EPerProjectPerRegionForTPUAPI` |
+| v6e | On-demand | Zone | `TPUV6EPerProjectPerZoneForTPUAPI` |
+| v6e | Spot/Preemptible | Region | `TPUV6EPreemptiblePerProjectPerRegionForTPUAPI` |
+| v6e | Spot/Preemptible | Zone | `TPUV6EPreemptiblePerProjectPerZoneForTPUAPI` |
+
+#### Available Regions and Zones
+
+| Region | Available Zones |
+|--------|----------------|
+| **Africa** | south1 |
+| **Asia** | east1, east2, northeast1, northeast2, northeast3, south1, south2, southeast1, southeast2 |
+| **Australia** | southeast1, southeast2 |
+| **Europe** | central2, north1, north2, southwest1, west1, west2, west3, west4, west6, west8, west9, west10, west12 |
+| **Middle East** | central1, central2, west1 |
+| **North America** | northeast1, northeast2, south1 |
+| **South America** | east1, west1 |
+| **United States** | central1, east1, east4, east5, south1, west1, west2, west3, west4 |
+
+**Reference**: [Google Cloud Regions and Zones](https://cloud.google.com/compute/docs/regions-zones)
+
+#### Group Resources
+
+For detailed quota information and group-specific resources, request access to our internal spreadsheet:
+[Group Quota Spreadsheet](https://docs.google.com/spreadsheets/d/1X9GEXr0iJ9WM2GlpkwXFaLX04rYKyn-s-WaQisGpbnk/edit?usp=sharing)
+
+
+## Google Cloud Commands
+
+### Running on a TPU VM
+
+**Set the project id:**
+
+```
+gcloud config set project ${id of the project}
+```
+The id of the project can be retrieved by visiting https://console.cloud.google.com/.
+
+**Requesting TPU-VM**:
+```
+gcloud compute tpus tpu-vm create example_tpu \
+  --zone=${e.g., europe-west4-a} \
+  --accelerator-type=${tpu type, e.g., v3-8} \
+  --version=tpu-ubuntu2204-base \
+  --spot
+```
+to request on demand TPU-VM, remove the "--spot" flag.
+TPU software versions (``--version``) should be determined based on the TPU version (e.g., v3, v4, v6e, etc.), see [here](https://cloud.google.com/tpu/docs/runtimes#pytorch_and_jax).
+
+The TPU-VM request command would fail when there is no available resources. To queue for the resource:
+```
+# start queueing
+gcloud compute tpus queued-resources create example_queue \
+  --node-id=example_tpu \
+  --zone=${e.g., europe-west4-a} \
+  --accelerator-type=${tpu type, e.g., v3-8} \
+  --runtime-version=tpu-ubuntu2204-base
+
+# check queueing status
+gcloud compute tpus queued-resources describe example_queue \
+  --zone=${e.g., europe-west4-a}
+
+# delete queue
+gcloud compute tpus queued-resources delete example_queue --zone=${e.g., europe-west4-a}
+```
+both spot and on-demand resource can be queued.
+
+**To log in to the created TPU-VM:**
+```
+gcloud compute tpus tpu-vm ssh example_tpu \
+  --zone=${e.g., europe-west4-a} \
+  --ssh-key-file={e.g., ~/.ssh/google_compute_engine} \
+  --worker=0
+```
+
+**To delete the TPU-VM:**
+```
+gcloud compute tpus tpu-vm delete example_tpu \
+  --zone=${e.g., europe-west4-a}
+```
+
+**To use the TPU-VM with VS Code / Cursor:**
+Run the following to obtain the external IP of the TPU-VM:
+```
+gcloud compute tpus tpu-vm describe example_tpu \
+  --zone=${e.g., europe-west4-a}
+```
+
+**Once you have the external IP, add the following to your ssh config:**
+```
+Host the_name_does_not_matter
+  User your_username
+  Hostname ${the external IP of the TPU-VM}
+  IdentityFile /path/to/your/ssh/file
+```
 
 
 ## Job Conventions
 
+For easier managemet, under Zhuang's group, we have serval requirements in submitting a job.
+
 Naming
+
+## Tools
