@@ -36,7 +36,19 @@ TPUs are specialized high-performance computing resources optimized for large-sc
       - [Group Resources](#group-resources)
   - [Google Cloud Commands](#google-cloud-commands)
     - [Running on a TPU VM](#running-on-a-tpu-vm)
+  - [Storage](#storage)
+    - [Cloud storage buckets](#cloud-storage-buckets)
+    - [Durable block storage](#durable-block-storage)
+  - [Other Helpful Resources](#other-helpful-resources)
+  - [Cost](#cost)
+    - [General Rules](#general-rules)
+    - [Specific Cost Rates](#specific-cost-rates)
+      - [(1) Cloud storage cost](#1-cloud-storage-cost)
+      - [(2) Networking cost](#2-networking-cost)
+      - [(3) Compute engine cost](#3-compute-engine-cost)
+    - [Monitoring](#monitoring)
   - [Job Conventions](#job-conventions)
+    - [Naming](#naming)
   - [Tools](#tools)
 
 ## Setup
@@ -395,10 +407,201 @@ Host the_name_does_not_matter
 ```
 
 
+## Storage
+
+By default, each Cloud TPU VM has a single 100 GiB boot disk. To store additional data, one can use a cloud storage bucket that will be accessed remotely during model training or a durable block storage attached to the VM. The bucket is more flexible and cheaper; the durable block storage is faster but requires a pre-determined amount and is more expensive.
+
+### Cloud storage buckets
+
+(1.1) To create a bucket, go to https://console.cloud.google.com/ and search "Buckets" in the search bar. Then, create a bucket in the same zone as your TPU-VM.
+(1.2) To upload data to a bucket, run
+```
+gsutil -m cp -r /local/path/to/dataset gs://bucket_name/path/to/dataset
+```
+managing data within and across buckets works similarly: they can be handled with ``gsutil cp``, ``gsutil mv``, etc.
+
+(1.3) Access buckets in project A from project B's TPU VM:
+Go to https://console.cloud.google.com/ and search "Buckets" in the search bar, click into the bucket you're interested in.<br>
+Then, go to `Permissions` page, and cick on `Grant access`. In the `New principals` field, put in `projectOwner:name-of-project-b` and set role to `Storage Legacy Object Reader`.
+
+### Durable block storage
+
+(2.0) Disk has two modes: single-writer mode and read-only mode
+
+Only single-host TPU (e.g., v3-8, v4-8) can have a disk attached in single-writer mode. For multi-host TPU (e.g., v3-32, v4-64), a disk can only be attached in read-only mode.
+
+In read-only mode, formatting a non-boot disk isn't possible. Thus, if you want to use the disk on a multi-host TPU, you should format the non-boot disk first on a single-host machine in single-writer mode first. You don't have to redo the formatting when you attach the disk to your multi-host TPU.
+
+To create a disk, run
+```
+gcloud compute disks create example-disk --size={10 to 65,536, the unit is GB} --type={e.g., pd-standard}  --zone={e.g., europe-west4-a}
+```
+According to https://cloud.google.com/compute/docs/disks/add-persistent-disk#gcloud, acceptable sizes range, in 1 GB increments, from 10 GB to 65,536 GB inclusive.
+
+(2.1) First, on a single-host machine
+- Attach the disk to a single-host TPU-VM
+```
+gcloud alpha compute tpus tpu-vm attach-disk example-tpu --disk example-disk --zone={e.g., europe-west4-a} --mode=read-write
+```
+`example-tpu` should be replaced with the name of your TPU-VM
+
+- Format a non-boot disk (after logging in to the TPU-VM):
+```
+ls -l /dev/disk/by-id/google-*
+```
+This would output something like
+```
+lrwxrwxrwx 1 root root  9 Aug 13 08:09 /dev/disk/by-id/google-persistent-disk-0 -> ../../sda
+lrwxrwxrwx 1 root root 10 Aug 13 08:09 /dev/disk/by-id/google-persistent-disk-0-part1 -> ../../sda1
+lrwxrwxrwx 1 root root 11 Aug 13 08:09 /dev/disk/by-id/google-persistent-disk-0-part14 -> ../../sda14
+lrwxrwxrwx 1 root root 11 Aug 13 08:09 /dev/disk/by-id/google-persistent-disk-0-part15 -> ../../sda15
+lrwxrwxrwx 1 root root  9 Aug 13 08:44 /dev/disk/by-id/google-persistent-disk-1 -> ../../sdb
+```
+This shows that for the next step, the `DEVICE_NAME` should be `sdb`.
+```
+sudo mkfs.FILE_SYSTEM_TYPE -m 0 -E lazy_itable_init=0,lazy_journal_init=0,discard /dev/DEVICE_NAME
+```
+Normally, FILE_SYSTEM_TYPE should be `ext4` or `xfs`.
+
+- Mount the disk onto an arbitrary location on the VM (after logging in to the TPU-VM)
+```
+sudo mkdir -p /mnt/disks/MOUNT_DIR
+sudo mount -o discard,defaults /dev/DEVICE_NAME /mnt/disks/MOUNT_DIR
+sudo chmod a+w /mnt/disks/MOUNT_DIR
+```
+After mounting, you can save your datasets onto the disk.
+
+(2.2) Then, on the multi-host machine that you're actually using for e.g. model training
+- Attach the disk to a multi-host TPU-VM (from your local terminal)
+```
+gcloud alpha compute tpus tpu-vm attach-disk example-tpu --disk example-disk --zone={e.g., europe-west4-a} --mode=read-only
+```
+`example-tpu` should be replaced with the name of your TPU-VM
+
+- Mount the disk (from your local terminal)
+```
+gcloud compute tpus tpu-vm ssh TPU_NAME --zone={e.g., europe-west4-a} --worker=all --command="sudo mkdir -p /mnt/disks/MOUNT_DIR"
+gcloud compute tpus tpu-vm ssh TPU_NAME --zone={e.g., europe-west4-a} --worker=all --command="sudo mount -o ro,noload /dev/sdb /mnt/disks/MOUNT_DIR"
+```
+
+(2.3) Clean up
+Detach the disk from the TPU-VM
+```
+gcloud alpha compute tpus tpu-vm detach-disk example-tpu --disk example-disk --zone={e.g., europe-west4-a}
+```
+Delete the disk
+```
+gcloud compute disks delete example-disk --zone={e.g., europe-west4-a}
+```
+## Other Helpful Resources
+https://cloud.google.com/tpu/docs/storage-options
+https://cloud.google.com/tpu/docs/attach-durable-block-storage
+
+
+
+
+
+
+## Cost
+
+It is very important that you minimize the cost of your work, as costs accumulate daily.
+
+### General Rules
+1. Reduce I/O operations from VM to bucket by compressing datasets.
+2. Ensure your bucket and VM are in the same zone.
+3. Disable soft deletion in your buckets.
+4. Do not create multi-region buckets.
+5. Do not process data inside a bucket or transfer data between buckets. The best practice is to process everything locally and upload to the bucket.
+
+
+### Specific Cost Rates
+
+Cost includes storage cost, networking cost, compute engine cost, and other minor costs.
+
+#### (1) Cloud storage cost
+**Bucket cost**
+
+The storage cost on buckets is NOT covered by TPU Research Cloud. It is usually the single largest part of TPU usage cost.
+The standard cost (usually, one should use single-region buckets instead of dual-region and multi-region ones) can be viewed in the "Data storage" table under https://cloud.google.com/storage/pricing#price-tables.<br>
+For a quick estimation, the storage price is around $0.02 / GB / month.
+
+**Operation cost**
+
+Performing operations within Cloud Storage incurs cost. Class A operations (e.g., uploading files) cost $0.0050 / 1,000 operations, while Class B operations (e.g., accessing files) cost $0.0004 / 1,000 operations. While these operations are cheap, the cost can easily ramp up if, e.g., the image datasets are stored as individual image files rather than tfrecords.
+
+Below is the complete categorization of all operations from https://cloud.google.com/storage/pricing.
+![Operational Cost](./pics/operational_cost.png)
+
+#### (2) Networking cost
+
+**File transfer**
+- Local -> bucket transfer
+According to the "General network usage" table under https://cloud.google.com/storage/pricing#price-tables, inbound data transfer is free.
+
+- Bucket -> local transfer
+According to the "General network usage" table under https://cloud.google.com/storage/pricing#price-tables, outbound data transfer costs $0.1 / GB.
+
+- Bucket -> VM transfer
+During model training, data can be streamed from the buckets.<br>
+According to the "Data transfer within Google Cloud" table under Data transfer within Google Cloud" table under https://cloud.google.com/storage/pricing#price-tables, **as long as the bucket and the TPU-VM are in the same location**, the data transfer is free.
+
+- Bucket -> bucket transfer
+According to the "Data transfer within Google Cloud" tables under Data transfer within Google Cloud" table under https://cloud.google.com/storage/pricing#price-tables,<br>
+- If the buckets are in the same location, the data transfer is free.<br>
+- If the buckets are in different locations (which may be more common), the data transfer would cost money. For a quick estimation, the transfer cost is $0.02-0.05 / GB.<br>
+This means that transfer a 1TB data between buckets would cost at least $20. Thus, if a copy of the data is also available locally, it's advised to upload it from local instead of copy between buckets.
+
+**Network Intelligence Center**
+As you use the TPUs, many monitoring statistics are automatically collected. These "Network Intelligence Center"-related costs (e.g., "Network Intelligence Center Network Analyzer Resource Hours") appear on the cost reports, but are 100% discounted (i.e., practically free) currently. See https://cloud.google.com/network-intelligence-center/pricing.
+
+
+
+#### (3) Compute engine cost
+
+**TPU**
+The usage of TPUs is often covered by the TPU Research Cloud program.<br>
+Its standard pricing can be viewed at https://cloud.google.com/tpu/pricing.<br>
+For a quick estimation, the price of a TPU v4-8 is $12.88 / hour.
+
+**VM instance**
+The cost of VM is not covered by the TPU Research Cloud. Unless you explicitly specify another type when creating it, the VM instance should be of type `n1-standard-2`.<br>
+Its pricing can be viewed at https://cloud.google.com/compute/vm-instance-pricing.<br>
+For a quick estimation, the price of a `n1-standard-2` VM is roughly $0.095 / hour.<br>
+Spot VM is cheaper than an on-demand VM.
+
+**Disk**
+Unlike buckets, disk space is counted towards compute engine cost rather than storage cost.<br>
+The pricing of disks can be viewed at https://cloud.google.com/compute/disks-image-pricing.
+It falls roughly under the following categorys:
+- Boot disk: the disk space created automatically when you create a compute instance (e.g., TPU-VM). It is 100 GB by default. The storage is of type `durable block storage`.<br>
+Nonetheless, note that even though it is of type `durable`, it is deleted after deletion of the VM.
+- Durable block storage: can be attached to a TPU-VM. Data can be preserved even when the VM stops, suspends, restarts, crashes, or fails. There are two subtypes:
+  - Hyperdisk: has better and more customizable performance, recommended over persistent disk by Google.
+  - Persistent disk: unlike hyperdisk, has support for all machine series (including the TPU-VM's default `n1-standard-2`).
+According to https://cloud.google.com/compute/docs/disks/persistent-disks, if you create a disk in the Google Cloud console, the default disk type is `pd-balanced`. If you create a disk using the gcloud CLI or the Compute Engine API, the default disk type is `pd-standard`.<br>
+For a quick estimation, the price of a `pd-standard` (i.e., type `standard provisioned space`) is roughly $0.0394524 / GB / month, about two times the price for buckets.
+- Temporary block storage (e.g., local SSD): offers the fastest performance among all block storage types, with the tradeoff that the stored data is lost if the VM is stops, suspends, restarts, crashes, or fails.
+
+
+### Monitoring
+
+**For a specific TPU-VM**
+
+Go to https://console.cloud.google.com/compute/tpus to obtain the list of TPUs. Then, click into one of the TPUs and go to the "monitoring" page.<br>
+See also https://cloud.google.com/tpu/docs/troubleshooting/tpu-vm-monitoring.
+
+**For aggregated statistics on a project-level**
+
+Go to https://console.cloud.google.com/monitoring/metrics-explorer and select your desired metric in the "Select a metric" field.
+
+
+
 ## Job Conventions
 
-For easier managemet, under Zhuang's group, we have serval requirements in submitting a job.
+For easier management, under Zhuang's group, we have several requirements when using TPUs.
 
-Naming
+### Naming
+- All TPU VMs must be named after the format {user_name}-{accelerator_type}-{suffix}
+- All buckets must be named after the format {user_name}-{bucket_name}
 
 ## Tools
