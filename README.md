@@ -47,7 +47,7 @@ TPUs are specialized high-performance computing resources optimized for large-sc
       - [(2) Networking cost](#2-networking-cost)
       - [(3) Compute engine cost](#3-compute-engine-cost)
     - [Monitoring](#monitoring)
-  - [Job Conventions](#job-conventions)
+  - [Job Requirements](#job-requirements)
     - [Naming](#naming)
   - [Tools](#tools)
 
@@ -596,12 +596,13 @@ Go to https://console.cloud.google.com/monitoring/metrics-explorer and select yo
 
 
 
-## Job Conventions
+## Job Requirements
 
 For easier management, under Zhuang's group, we have several requirements when using TPUs.
 
 ### Naming
-- All TPU VMs must be named after the format {user_name}-{accelerator_type}-{suffix}
-- All buckets must be named after the format {user_name}-{bucket_name}
+- All TPU VMs must be named after the format `{user_name}`-`{accelerator_type}`-`{suffix}`
+- All buckets must be named after the format `{user_name}`-`{bucket_name}`
 
 ## Tools
+Yufeng's jobman creates a good option for TPU job management: https://github.com/Zephyr271828/jobman
