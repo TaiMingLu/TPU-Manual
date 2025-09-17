@@ -2,7 +2,7 @@
 
 Contacts: For any questions regarding the setup or usage of the TPU, please contact Boya Zeng or Taiming Lu via email, Slack, or Messenger. Please make sure to send a message on Messenger (instead of only sending a friend request on Facebook) for us to see it.
 
-The content of this manual is composed by [Boya Zeng](https://boyazeng.github.io), [Yufeng Xu](https://zephyr271828.github.io), and [Taiming Lu](taiminglu.com).
+The content of this manual is composed by [Boya Zeng](https://boyazeng.github.io), [Yufeng Xu](https://zephyr271828.github.io), and [Taiming Lu](taiminglu.com). For any TPU issues, please contact Boya or Taiming through Slack or Messenger.
 
 **It’s important to carefully track TPU usage costs. See the [Cost](#cost) section for key considerations and the [Job Requirements](#job-requirements) section for general rules on submitting jobs.**
 
