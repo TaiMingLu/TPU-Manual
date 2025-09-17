@@ -4,12 +4,13 @@ Contacts: For any questions regarding the setup or usage of the TPU, please cont
 
 The content of this manual is composed by [Boya Zeng](https://boyazeng.github.io), [Yufeng Xu](https://zephyr271828.github.io), and [Taiming Lu](taiminglu.com).
 
+**It’s important to carefully track TPU usage costs. See the [Cost](#cost) section for key considerations and the [Job Requirements](#job-requirements) section for general rules on submitting jobs.**
+
+
 ## Overview
 This manual is a guide for using the Google Cloud TPU in Zhuang's group at Princeton University.
 
 TPUs are specialized high-performance computing resources optimized for large-scale machine learning workloads. We have access to multiple TPU generations and topologies, including v3, v4, v5e, and v6e pods, with both preemptible and on-demand configurations available depending on quota and project access.
-
-**It’s important to carefully track TPU usage costs. See the [Cost](#cost) section for key considerations and the [Job Requirements](#job-requirements) section for general rules on submitting jobs.**
 
 ## Table of Contents
 
