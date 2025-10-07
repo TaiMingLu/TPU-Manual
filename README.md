@@ -10,6 +10,8 @@ The content of this manual is composed by [Boya Zeng](https://boyazeng.github.io
 ## Overview
 This manual is a guide for using the Google Cloud TPU in Zhuang's group at Princeton University.
 
+You can access this [slides]{https://docs.google.com/presentation/d/1AaRlwMk87DRO-bsk1o1tqVCVyZC6mI0SCK1FvMya3Hw/edit?usp=sharing} to see general introduction to TPU, Google Cloud, and Jax.
+
 TPUs are specialized high-performance computing resources optimized for large-scale machine learning workloads. We have access to multiple TPU generations and topologies, including v3, v4, v5e, and v6e pods, with both preemptible and on-demand configurations available depending on quota and project access.
 
 ## Table of Contents
